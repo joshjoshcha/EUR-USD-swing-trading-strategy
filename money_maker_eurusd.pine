@@ -1,0 +1,235 @@
+//@version=5
+strategy("Money Maker", "MM: EURUSD", true, pyramiding=0, calc_on_every_tick=true, currency=currency.USD, slippage=2,
+         commission_type=strategy.commission.cash_per_contract, commission_value=0.000015, process_orders_on_close=true, use_bar_magnifier=true)
+
+// Risk Method
+initial_capital = input.int(200000, "Initial Capital", group="Risk Method")
+risk_per_trade = input.float(0.5, "Risk per Trade (%)", step=0.1, group="Risk Method") / 100
+tp_sl_ratio = input.float(3.0, "Risk Reward Ratio", step=0.2, group='Risk Method')
+
+// Trading Hours
+tradingStartHour = input.int(7, "Start Hour", 4, 8, 1, inline="Line 1", group="Trading Hours")
+tradingEndHour = input.int(14, "End Hour", 10, 14, 1, inline="Line 1", group="Trading Hours")
+isWithinTradingHours = time >= timestamp(year, month, dayofmonth, hour=tradingStartHour) and time <= timestamp(year, month, dayofmonth, hour=tradingEndHour)
+
+// Moving Average
+ma_period1 = 10 
+ma_period2 = 20 
+ma_period3 = 50 
+ma_period4 = 100 
+maType = input.string("EMA", "Type", ["EMA", "HMA"], "HMA is often considered better than the EMA due to its reduced lag and smoother curve, making it more responsive in identifying trends", inline="Line 1", group="Moving Average")
+
+ma1 = maType == "EMA" ? ta.ema(close, int(ma_period1)) : ta.hma(close, int(ma_period1))  
+ma2 = maType == "EMA" ? ta.ema(close, int(ma_period2)) : ta.hma(close, int(ma_period2))  
+ma3 = maType == "EMA" ? ta.ema(close, int(ma_period3)) : ta.hma(close, int(ma_period3))  
+ma4 = maType == "EMA" ? ta.ema(close, int(ma_period4)) : ta.hma(close, int(ma_period4))  
+
+maLongSetup = ma2 > ma3 and barstate.isconfirmed
+maShortSetup = ma2< ma3 and barstate.isconfirmed
+maCross = ta.cross(ma2, ma3) and barstate.isconfirmed
+
+maCrossover = ta.crossover(ma2, ma3) and barstate.isconfirmed
+maCrossunder = ta.crossunder(ma2, ma3) and barstate.isconfirmed
+
+// Supertrend
+atrLength = input.int(10, "ATR Length", [10, 14], inline="Line 1", group="Supertrend")
+atrMultiplier = input.float(3.0, "ATR Multiplier", inline="Line 1", group="Supertrend")
+supertrend_offset = input.int(1, "HTF offset", 1, 2, 1, group="Supertrend")
+HTF_supertrend = str.tostring(str.tonumber(timeframe.period) + supertrend_offset)
+
+supertrend(atrLength, atrMultiplier) =>
+    atr = ta.sma(ta.tr, atrLength) 
+    up = close - (atrMultiplier * atr), dn = close + (atrMultiplier * atr)
+    up_1 = nz(up[1], up), dn_1 = nz(dn[1], dn) 
+    up := close[1] > up_1 ? math.max(up, up_1) : up 
+    dn := close[1] < dn_1 ? math.min(dn, dn_1) : dn
+    trend = 1
+    trend := nz(trend[1], trend) 
+    if trend == 1 and close < up_1
+        trend := -1
+    else if (trend == -1 and close > dn_1)
+        trend := 1
+    [up, dn, trend]
+[up, dn, trend] = supertrend(atrLength, atrMultiplier)
+
+up1 = up
+dn1 = dn
+trend1 = trend
+
+up2 = request.security(syminfo.tickerid, "2", up[barstate.isconfirmed ? 0 : 1])
+dn2 = request.security(syminfo.tickerid, "2", dn[barstate.isconfirmed ? 0 : 1])
+trend2 = request.security(syminfo.tickerid, "2", trend[barstate.isconfirmed ? 0 : 1])
+
+supertrend1Buy = ta.crossover(trend1, -1)
+supertrend1Sell = ta.crossunder(trend1, 1)
+supertrend2Buy = trend2 == 1
+supertrend2Sell = trend2 == -1
+
+// Initialize variables
+varip float entryPrice = na
+varip float takeProfitPrice = na
+varip float stopLossPrice = na
+varip float distanceToSupertrend = na
+varip bool breakEvenConditionMet = false
+varip bool prohibit_entries = false
+varip bool simulatedexist = false
+varip bool realLongExist = false
+varip bool realShortExist = false
+
+if maCross 
+    prohibit_entries := false
+
+// Breakeven Condition
+if not(breakEvenConditionMet) and strategy.position_size > 0 and up1 >= entryPrice and barstate.isconfirmed
+    breakEvenConditionMet := true
+if not(breakEvenConditionMet) and strategy.position_size < 0 and dn1 <= entryPrice and barstate.isconfirmed
+    breakEvenConditionMet := true
+
+// Entries
+canTrade = not(prohibit_entries) and na(entryPrice) and barstate.isconfirmed
+supertrendLongSetup = supertrend1Buy and supertrend2Buy
+supertrendShortSetup = supertrend1Sell and supertrend2Sell 
+
+if isWithinTradingHours and canTrade and supertrendLongSetup and maLongSetup 
+    entryPrice := close
+    distanceToSupertrend := close - up1
+    takeProfitPrice := close + (tp_sl_ratio * distanceToSupertrend)
+    realLongExist := true
+    prohibit_entries := true
+    position_size = (initial_capital * risk_per_trade) / distanceToSupertrend 
+    if position_size <= 5000000
+        strategy.entry("Long", strategy.long, position_size)
+        strategy.exit("Dynamic Exit", "Long", stop=up1, limit=takeProfitPrice)
+        alert('7014697631957,buy,EURUSD,risk=' + str.tostring(position_size / 100000), alert.freq_once_per_bar)
+    if position_size > 5000000
+        strategy.entry("Long", strategy.long, 3)
+        strategy.exit("Dynamic Exit", "Long", stop=up1, limit=takeProfitPrice)
+
+if isWithinTradingHours and canTrade and supertrendShortSetup and maShortSetup 
+    entryPrice := close
+    distanceToSupertrend := dn1 - close
+    takeProfitPrice := close - (tp_sl_ratio * distanceToSupertrend)
+    realShortExist := true
+    prohibit_entries := true
+    position_size = (initial_capital * risk_per_trade) / distanceToSupertrend 
+    if position_size <= 5000000
+        strategy.entry("Short", strategy.short, position_size)
+        strategy.exit("Dynamic Exit", "Short", stop=dn1, limit=takeProfitPrice)
+        alert('7014697631957,sell,EURUSD,risk=' + str.tostring(position_size / 100000), alert.freq_once_per_bar)
+    if position_size > 50000000
+        strategy.entry("Short", strategy.short, 3)
+        strategy.exit("Dynamic Exit", "Short", stop=dn1, limit=takeProfitPrice)
+
+// Exits
+if strategy.position_size > 0 and realLongExist and barstate.isconfirmed 
+    if breakEvenConditionMet and up2 >= entryPrice
+        stopLossPrice := up2
+        prohibit_entries := false
+    if breakEvenConditionMet and up2 < entryPrice
+        stopLossPrice := entryPrice
+        prohibit_entries := false
+    if not(breakEvenConditionMet) and up1 < entryPrice
+        stopLossPrice:= up1
+        prohibit_entries := true
+    strategy.exit("Dynamic Exit", "Long", stop=stopLossPrice, limit=takeProfitPrice)
+
+if strategy.position_size < 0 and realShortExist and barstate.isconfirmed
+    if breakEvenConditionMet and dn2 <= entryPrice
+        stopLossPrice := dn2
+        prohibit_entries := false
+    if breakEvenConditionMet and dn2 > entryPrice
+        stopLossPrice := entryPrice
+        prohibit_entries := false
+    if not(breakEvenConditionMet) and dn1 > entryPrice
+        stopLossPrice:= dn1
+        prohibit_entries := true
+    strategy.exit("Dynamic Exit", "Short", stop=stopLossPrice, limit=takeProfitPrice)
+
+// Exit Alerts
+if (strategy.position_size == 0 and realLongExist[1]) 
+    alert('7014697631957,closelong,EURUSD', alert.freq_once_per_bar)
+if (strategy.position_size == 0 and realShortExist[1]) 
+    alert('7014697631957,closeshort,EURUSD', alert.freq_once_per_bar)
+
+// Reset Variables
+if strategy.position_size == 0 and (realLongExist[1] or realShortExist[1]) and barstate.isconfirmed
+    entryPrice := na, takeProfitPrice := na, stopLossPrice := na, distanceToSupertrend := na
+    breakEvenConditionMet := false, realLongExist := false, realShortExist := false
+
+
+
+
+
+
+// Off-hours trading simulation
+if not(isWithinTradingHours) and canTrade and supertrendLongSetup and maLongSetup 
+    entryPrice := close
+    distanceToSupertrend := close - up1
+    takeProfitPrice := close + (tp_sl_ratio * distanceToSupertrend)
+    simulatedexist := true
+    prohibit_entries := true
+    strategy.entry("Simulated Long", strategy.long, 1)
+    strategy.exit("Simulated Exit", "Simulated Long", stop=stopLossPrice, limit=takeProfitPrice)
+
+if not(isWithinTradingHours) and canTrade and supertrendShortSetup and maShortSetup 
+    entryPrice := close
+    distanceToSupertrend := dn1 - close
+    takeProfitPrice := close - (tp_sl_ratio * distanceToSupertrend)
+    simulatedexist := true
+    prohibit_entries := true
+    strategy.entry("Simulated Short", strategy.short, 1)
+    strategy.exit("Simulated Exit", "Simulated Short", stop=stopLossPrice, limit=takeProfitPrice)
+
+if strategy.position_size > 0 and simulatedexist and barstate.isconfirmed 
+    if breakEvenConditionMet and up2 >= entryPrice
+        stopLossPrice := up2
+        prohibit_entries := false
+    if breakEvenConditionMet and up2 < entryPrice
+        stopLossPrice := entryPrice
+        prohibit_entries := false
+    if not(breakEvenConditionMet) and up1 < entryPrice
+        stopLossPrice:= up1
+        prohibit_entries := true
+    strategy.exit("Simulated Exit", "Simulated Long", stop=stopLossPrice, limit=takeProfitPrice)
+
+if strategy.position_size < 0 and simulatedexist and barstate.isconfirmed
+    if breakEvenConditionMet and dn2 <= entryPrice
+        stopLossPrice := dn2
+        prohibit_entries := false
+    if breakEvenConditionMet and dn2 > entryPrice
+        stopLossPrice := entryPrice
+        prohibit_entries := false
+    if not(breakEvenConditionMet) and dn1 > entryPrice
+        stopLossPrice:= dn1
+        prohibit_entries := true
+    strategy.exit("Simulated Exit", "Simulated Short", stop=stopLossPrice, limit=takeProfitPrice)
+
+if strategy.position_size == 0 and (simulatedexist[1]) and barstate.isconfirmed
+    entryPrice := na, takeProfitPrice := na, stopLossPrice := na, distanceToSupertrend := na
+    breakEvenConditionMet := false, simulatedexist := false
+
+
+
+
+
+
+plot(entryPrice, color=color.orange, linewidth=2, style=plot.style_circles, title="Entry price", display=display.all)
+plot(stopLossPrice, color=color.purple, title="SL price", linewidth=2, style=plot.style_circles, display=display.all)
+plot(takeProfitPrice, color=color.blue, title="TP price", linewidth=2, style=plot.style_circles, display=display.all)
+plotchar(prohibit_entries, title="Prohibit Entries", location=location.bottom, char="P", color=color.red, size=size.small, display=display.all)
+plotchar(breakEvenConditionMet, title="Break Even", location=location.top, char="B", color=#1f9dbd, size=size.small, display=display.all)
+plotchar(realLongExist, title="Real Long Exist?", location=location.belowbar, char="R", color=#207445, size=size.small, display=display.all)
+plotchar(realShortExist, title="Real Short Exist?", location=location.belowbar, char="R", color=color.rgb(143, 50, 29), size=size.small, display=display.all)
+plotchar(simulatedexist, title="Simulated Trade Exist?", location=location.belowbar, char="R", color=color.rgb(143, 50, 29), size=size.small, display=display.all)
+plotchar(not(strategy.position_size == 0), title="Position Active?", location=location.abovebar, char="X", color=color.rgb(41, 80, 90), size=size.small, display=display.all)
+
+plot(trend1 == 1 ? up1 : na, title="1 Up Trend", style=plot.style_linebr, linewidth=2, color=color.new(color.green, 0), display=display.all)
+plot(trend1 == -1 ? dn1 : na, title="1 Down Trend", style=plot.style_linebr, linewidth=2, color=color.new(color.red, 0), display=display.all)
+plot(trend2 == 1 ? up2 : na, title="2 Up Trend", style=plot.style_linebr, linewidth=1, color=color.new(color.black, 0), display=display.all)
+plot(trend2 == -1 ? dn2 : na, title="2 Down Trend", style=plot.style_linebr, linewidth=1, color=color.new(color.black, 0), display=display.all)
+
+plot(ma1, color=color.yellow, title="ma1", linewidth=2, display=display.all)
+plot(ma2, color=color.red, title="ma2", display=display.all)
+plot(ma3, color=color.blue, title="ma3", display=display.all)
+plot(ma4, color=color.orange, title="ma4", display=display.all)
+bgcolor(isWithinTradingHours ? na : color.new(color.red, 90), title="Disabled Trading Period")

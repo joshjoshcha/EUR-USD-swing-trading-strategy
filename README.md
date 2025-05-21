@@ -1,0 +1,1 @@
+# EUR-USD-swing-trading-strategy

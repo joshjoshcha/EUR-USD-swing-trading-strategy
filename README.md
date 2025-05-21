@@ -1,6 +1,6 @@
 # Money Maker Strategy – EURUSD (Pine Script v5)
 
-This repository contains a custom-built trading strategy script for **EURUSD**, written in **Pine Script v5** for use on TradingView. The strategy integrates multiple layers of logic — including multi-timeframe Supertrend confirmation, moving average crossovers, strict trading hour constraints, and dynamic risk-based position sizing — to create a realistic backtestable system. The reason why I've made this public is because over time its performance has degraded, but with some adjustements, it may become more profitable.
+This repository contains a custom-built trading strategy script for **EURUSD**, written in **Pine Script v5** for use on TradingView. The strategy integrates multiple layers of logic — including multi-timeframe Supertrend confirmation, moving average crossovers and dynamic risk-based position sizing. The reason why I've made this public is because over time its performance has degraded, but with some adjustements, it may become more profitable.
 ---
 
 ## 🎯 Strategy Overview
